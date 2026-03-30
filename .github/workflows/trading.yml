@@ -13,6 +13,8 @@ jobs:
   trade:
     name: Run Trading Bot
     runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     # 360 minutes = 6 hours = exactly 09:20 → 15:20 IST
     # The script exits cleanly at 15:15 IST well within this window.
