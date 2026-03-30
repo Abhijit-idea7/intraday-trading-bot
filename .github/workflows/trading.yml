@@ -1,0 +1,45 @@
+name: Intraday Trading Bot
+
+# -----------------------------------------------------------------------
+# Trigger: every weekday at 03:50 UTC = 09:20 AM IST (market open + 5 min)
+# Manual trigger also available from the Actions tab for testing.
+# -----------------------------------------------------------------------
+on:
+  schedule:
+    - cron: "50 3 * * 1-5"   # Mon–Fri, 09:20 IST
+  workflow_dispatch:           # Manual run button in GitHub Actions UI
+
+jobs:
+  trade:
+    name: Run Trading Bot
+    runs-on: ubuntu-latest
+
+    # 360 minutes = 6 hours = exactly 09:20 → 15:20 IST
+    # The script exits cleanly at 15:15 IST well within this window.
+    timeout-minutes: 360
+
+    steps:
+      # ---- 1. Checkout code ----
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ---- 2. Set up Python ----
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      # ---- 3. Install dependencies ----
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # ---- 4. Run the bot ----
+      #   STOCKSDEVELOPER_API_KEY and STOCKSDEVELOPER_ACCOUNT are stored
+      #   as GitHub Actions Secrets (repo Settings → Secrets and variables → Actions).
+      #   They are never printed in logs.
+      - name: Run trading bot
+        env:
+          STOCKSDEVELOPER_API_KEY: ${{ secrets.STOCKSDEVELOPER_API_KEY }}
+          STOCKSDEVELOPER_ACCOUNT: ${{ secrets.STOCKSDEVELOPER_ACCOUNT }}
+        run: python main.py
