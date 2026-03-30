@@ -24,14 +24,14 @@ STOCKSDEVELOPER_URL     = "https://tv.stocksdeveloper.in/"
 STOCKSDEVELOPER_API_KEY = os.getenv("STOCKSDEVELOPER_API_KEY", "bbd4eadb-105b-4f19-8dd9-b571e33ec832")
 STOCKSDEVELOPER_ACCOUNT = os.getenv("STOCKSDEVELOPER_ACCOUNT", "AbhiZerodha")
 
-# Test payload — 1 share of TATAMOTORS, intraday BUY
+# Test payload — 1 share of SAIL (low price, safe for connectivity test), intraday BUY
 payload = {
     "command": "PLACE_ORDERS",
     "orders": [
         {
             "variety":     "REGULAR",
             "exchange":    "NSE",
-            "symbol":      "TATAMOTORS",
+            "symbol":      "SAIL",
             "tradeType":   "BUY",
             "orderType":   "MARKET",
             "productType": "INTRADAY",
