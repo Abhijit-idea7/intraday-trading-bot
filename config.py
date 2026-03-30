@@ -7,9 +7,9 @@ load_dotenv()
 # Stock Universe — High Beta NSE Stocks
 # ---------------------------------------------------------------------------
 STOCK_UNIVERSE = [
-    "TATAMOTORS", "TATASTEEL", "SAIL",      "BANKBARODA", "PNB",
-    "CANBK",      "ADANIENT",  "ADANIPORTS", "ZOMATO",     "SUZLON",
-    "IDEA",       "NHPC",      "IRFC",       "HINDCOPPER", "YESBANK",
+    "TMPV",   "TATASTEEL", "SAIL",      "BANKBARODA", "PNB",
+    "CANBK",  "ADANIENT",  "ADANIPORTS", "ETERNAL",   "SUZLON",
+    "IDEA",   "NHPC",      "IRFC",       "HINDCOPPER", "YESBANK",
 ]
 
 # ---------------------------------------------------------------------------
