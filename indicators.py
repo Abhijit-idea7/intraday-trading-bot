@@ -1,14 +1,12 @@
 """
 indicators.py
 -------------
-Adds Supertrend, VWAP, RSI, and Volume Average to a candle DataFrame.
-Uses pandas-ta under the hood; all columns are appended in-place.
+Manual implementations of Supertrend, VWAP, RSI, and Volume Average.
+No external TA library required — only pandas and numpy.
 """
 
-import logging
-
+import numpy as np
 import pandas as pd
-import pandas_ta as ta
 
 from config import (
     RSI_PERIOD,
@@ -17,66 +15,139 @@ from config import (
     VOLUME_LOOKBACK,
 )
 
-logger = logging.getLogger(__name__)
-
-# Column name constants — derived from pandas-ta naming convention
-ST_COL   = f"SUPERT_{SUPERTREND_PERIOD}_{SUPERTREND_MULTIPLIER}"   # Supertrend line value
-STD_COL  = f"SUPERTd_{SUPERTREND_PERIOD}_{SUPERTREND_MULTIPLIER}"  # Direction: 1=bull, -1=bear
-STL_COL  = f"SUPERTl_{SUPERTREND_PERIOD}_{SUPERTREND_MULTIPLIER}"  # Long stop (SL for longs)
-STS_COL  = f"SUPERTs_{SUPERTREND_PERIOD}_{SUPERTREND_MULTIPLIER}"  # Short stop (SL for shorts)
-RSI_COL  = f"RSI_{RSI_PERIOD}"
-VWAP_COL = "VWAP_D"
-VOLAVG_COL = "VOL_AVG"
+# Column name constants used across strategy.py
+ST_COL     = "supertrend"     # Supertrend line value
+STD_COL    = "st_direction"   # 1 = bullish, -1 = bearish
+STL_COL    = "st_lower"       # Lower band  (stop for long trades)
+STS_COL    = "st_upper"       # Upper band  (stop for short trades)
+RSI_COL    = "rsi"
+VWAP_COL   = "vwap"
+VOLAVG_COL = "vol_avg"
 
 
+# ---------------------------------------------------------------------------
+# RSI  (Wilder's smoothing = EMA with alpha=1/period)
+# ---------------------------------------------------------------------------
+def _rsi(close: pd.Series, period: int = RSI_PERIOD) -> pd.Series:
+    delta    = close.diff()
+    gain     = delta.clip(lower=0)
+    loss     = (-delta).clip(lower=0)
+    avg_gain = gain.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
+    avg_loss = loss.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
+    rs       = avg_gain / avg_loss.replace(0, np.nan)
+    return 100 - (100 / (1 + rs))
+
+
+# ---------------------------------------------------------------------------
+# VWAP  (anchored to the first row — correct when data starts at market open)
+# ---------------------------------------------------------------------------
+def _vwap(high: pd.Series, low: pd.Series, close: pd.Series, volume: pd.Series) -> pd.Series:
+    typical   = (high + low + close) / 3
+    cum_vol   = volume.cumsum()
+    cum_tpvol = (typical * volume).cumsum()
+    return cum_tpvol / cum_vol.replace(0, np.nan)
+
+
+# ---------------------------------------------------------------------------
+# Supertrend
+# ---------------------------------------------------------------------------
+def _supertrend(
+    high:       pd.Series,
+    low:        pd.Series,
+    close:      pd.Series,
+    period:     int   = SUPERTREND_PERIOD,
+    multiplier: float = SUPERTREND_MULTIPLIER,
+) -> tuple[pd.Series, pd.Series, pd.Series, pd.Series]:
+    """
+    Returns (supertrend_line, direction, lower_band, upper_band).
+    direction: numpy int array — 1 = bullish, -1 = bearish.
+    """
+    # ATR (Wilder)
+    prev_close = close.shift(1)
+    tr = pd.concat([
+        high - low,
+        (high - prev_close).abs(),
+        (low  - prev_close).abs(),
+    ], axis=1).max(axis=1)
+    atr = tr.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
+
+    hl2         = (high + low) / 2
+    basic_upper = (hl2 + multiplier * atr).values
+    basic_lower = (hl2 - multiplier * atr).values
+    close_arr   = close.values
+    n           = len(close_arr)
+
+    final_upper = basic_upper.copy()
+    final_lower = basic_lower.copy()
+    direction   = np.ones(n, dtype=int)
+
+    for i in range(1, n):
+        # Upper band only drops — never rises — unless price breaks above it
+        final_upper[i] = (
+            basic_upper[i]
+            if basic_upper[i] < final_upper[i - 1] or close_arr[i - 1] > final_upper[i - 1]
+            else final_upper[i - 1]
+        )
+        # Lower band only rises — never drops — unless price breaks below it
+        final_lower[i] = (
+            basic_lower[i]
+            if basic_lower[i] > final_lower[i - 1] or close_arr[i - 1] < final_lower[i - 1]
+            else final_lower[i - 1]
+        )
+        # Direction flip logic
+        if close_arr[i] > final_upper[i - 1]:
+            direction[i] = 1
+        elif close_arr[i] < final_lower[i - 1]:
+            direction[i] = -1
+        else:
+            direction[i] = direction[i - 1]
+
+    supertrend_line = np.where(direction == 1, final_lower, final_upper)
+
+    idx = close.index
+    return (
+        pd.Series(supertrend_line, index=idx, name=ST_COL),
+        pd.Series(direction,       index=idx, name=STD_COL),
+        pd.Series(final_lower,     index=idx, name=STL_COL),
+        pd.Series(final_upper,     index=idx, name=STS_COL),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Public interface
+# ---------------------------------------------------------------------------
 def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Compute and append all required indicators to df.
-    Returns the same DataFrame (with added columns) or raises on failure.
-
-    Minimum rows needed: max(SUPERTREND_PERIOD * 2, RSI_PERIOD + 1, VOLUME_LOOKBACK) ≈ 20
+    Compute all indicators and append them to df.
+    Requires columns: Open, High, Low, Close, Volume.
+    Minimum rows: ~20 (to allow ATR and RSI warmup).
     """
     df = df.copy()
 
-    # --- Supertrend ---
-    st = ta.supertrend(
-        df["High"], df["Low"], df["Close"],
-        length=SUPERTREND_PERIOD,
-        multiplier=SUPERTREND_MULTIPLIER,
-    )
-    df = pd.concat([df, st], axis=1)
+    st, std, stl, sts = _supertrend(df["High"], df["Low"], df["Close"])
+    df[ST_COL]     = st
+    df[STD_COL]    = std
+    df[STL_COL]    = stl
+    df[STS_COL]    = sts
 
-    # --- VWAP (anchored to day start — resets naturally since we fetch 1d of data) ---
-    vwap = ta.vwap(df["High"], df["Low"], df["Close"], df["Volume"], anchor="D")
-    df[VWAP_COL] = vwap
-
-    # --- RSI ---
-    df[RSI_COL] = ta.rsi(df["Close"], length=RSI_PERIOD)
-
-    # --- Volume rolling average ---
+    df[VWAP_COL]   = _vwap(df["High"], df["Low"], df["Close"], df["Volume"])
+    df[RSI_COL]    = _rsi(df["Close"])
     df[VOLAVG_COL] = df["Volume"].rolling(window=VOLUME_LOOKBACK).mean()
 
     return df
 
 
 def get_supertrend_direction(df: pd.DataFrame, row: int = -1) -> int:
-    """Return Supertrend direction for a given row: 1 = bullish, -1 = bearish."""
     return int(df[STD_COL].iloc[row])
 
 
 def get_supertrend_sl(df: pd.DataFrame, direction: str, row: int = -1) -> float:
     """
-    Return the Supertrend-based stop-loss price.
-    For a LONG trade → use the lower band (STL_COL).
-    For a SHORT trade → use the upper band (STS_COL).
-    Falls back to the generic supertrend line if the directional column is NaN.
+    Stop-loss price from the Supertrend bands.
+    Long  → lower band (STL_COL)
+    Short → upper band (STS_COL)
     """
-    if direction == "BUY":
-        sl = df[STL_COL].iloc[row]
-        if pd.isna(sl):
-            sl = df[ST_COL].iloc[row]
-    else:
-        sl = df[STS_COL].iloc[row]
-        if pd.isna(sl):
-            sl = df[ST_COL].iloc[row]
+    sl = df[STL_COL].iloc[row] if direction == "BUY" else df[STS_COL].iloc[row]
+    if pd.isna(sl):
+        sl = df[ST_COL].iloc[row]
     return float(sl)
