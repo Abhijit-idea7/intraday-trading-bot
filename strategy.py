@@ -3,11 +3,15 @@ strategy.py
 -----------
 Signal generation: Supertrend + VWAP + Volume Spike + RSI Guard.
 
-Entry logic (applied to the most recently CLOSED candle):
+Entry logic (applied to the last COMPLETED candle = iloc[-2]):
   LONG  — Supertrend flips to bullish AND close > VWAP
-           AND volume > 1.5× avg AND RSI < RSI_OVERBOUGHT
+           AND volume > 1.2× avg AND RSI < RSI_OVERBOUGHT
   SHORT — Supertrend flips to bearish AND close < VWAP
-           AND volume > 1.5× avg AND RSI > RSI_OVERSOLD
+           AND volume > 1.2× avg AND RSI > RSI_OVERSOLD
+
+NOTE: We always use iloc[-2] as the signal candle (last fully closed bar).
+      iloc[-1] is the currently-forming candle on yfinance and has
+      incomplete volume — using it causes the volume filter to always fail.
 
 Returns a dict:
   { "action": "BUY" | "SELL" | "HOLD",
@@ -39,15 +43,19 @@ logger = logging.getLogger(__name__)
 
 _HOLD = {"action": "HOLD", "sl": 0.0, "target": 0.0}
 
+# Minimum candles needed for indicator warmup
+# Supertrend period=10, RSI period=14, Volume lookback=10 → need ~15
+MIN_CANDLES = 15
+
 
 def fetch_and_prepare(symbol: str) -> pd.DataFrame | None:
     """
-    Download today's 3-min candles and attach all indicators.
+    Download today's candles and attach all indicators.
     Returns None if data is insufficient.
     """
     df = fetch_candles(symbol)
-    if df is None or len(df) < 20:
-        logger.debug(f"{symbol}: not enough candles ({len(df) if df is not None else 0}), skipping.")
+    if df is None or len(df) < MIN_CANDLES:
+        logger.info(f"{symbol}: only {len(df) if df is not None else 0} candles — need {MIN_CANDLES}, skipping.")
         return None
     try:
         return add_indicators(df)
@@ -56,52 +64,83 @@ def fetch_and_prepare(symbol: str) -> pd.DataFrame | None:
         return None
 
 
-def generate_signal(df: pd.DataFrame) -> dict:
+def generate_signal(df: pd.DataFrame, symbol: str = "") -> dict:
     """
-    Evaluate the most recently completed candle for an entry signal.
+    Evaluate the last COMPLETED candle (iloc[-2]) for an entry signal.
 
-    We read index -1 as the signal candle (last fully closed bar).
-    We compare direction at -1 vs -2 to detect a fresh Supertrend flip.
+    iloc[-1] = currently forming candle (incomplete volume — do NOT use for signals)
+    iloc[-2] = last fully closed candle  ← signal candle
+    iloc[-3] = candle before that        ← used to detect direction flip
     """
+    # Need at least 3 rows: [-3], [-2], [-1]
+    if len(df) < 3:
+        return _HOLD
+
     try:
-        prev_dir = int(df[STD_COL].iloc[-2])
-        curr_dir = int(df[STD_COL].iloc[-1])
-    except (KeyError, IndexError, ValueError):
+        prev_dir = int(df[STD_COL].iloc[-3])   # direction 2 candles ago
+        curr_dir = int(df[STD_COL].iloc[-2])   # direction at last completed candle
+    except (KeyError, IndexError, ValueError) as e:
+        logger.warning(f"{symbol}: could not read Supertrend direction — {e}")
         return _HOLD
 
-    close      = df["Close"].iloc[-1]
-    vwap       = df[VWAP_COL].iloc[-1]
-    rsi        = df[RSI_COL].iloc[-1]
-    volume     = df["Volume"].iloc[-1]
-    vol_avg    = df[VOLAVG_COL].iloc[-1]
+    # Read all values from the last COMPLETED candle (iloc[-2])
+    close   = df["Close"].iloc[-2]
+    vwap    = df[VWAP_COL].iloc[-2]
+    rsi     = df[RSI_COL].iloc[-2]
+    volume  = df["Volume"].iloc[-2]
+    vol_avg = df[VOLAVG_COL].iloc[-2]
 
-    # Guard: skip if any indicator is NaN
+    # Guard: skip if any indicator is NaN (still in warmup period)
     if any(pd.isna(v) for v in [vwap, rsi, vol_avg]):
+        logger.info(f"{symbol}: indicator warmup not complete (NaN values), skipping.")
         return _HOLD
 
-    volume_ok = volume >= VOLUME_SPIKE_MULTIPLIER * vol_avg
     flip_long  = (prev_dir == -1) and (curr_dir == 1)
     flip_short = (prev_dir ==  1) and (curr_dir == -1)
+    volume_ok  = volume >= VOLUME_SPIKE_MULTIPLIER * vol_avg
+
+    # Log current state for every stock every tick — essential for diagnosing missed signals
+    logger.info(
+        f"{symbol}: dir={curr_dir:+d} flip_long={flip_long} flip_short={flip_short} | "
+        f"close={close:.2f} vwap={vwap:.2f} {'↑above' if close > vwap else '↓below'} | "
+        f"rsi={rsi:.1f} | vol={volume:.0f} avg={vol_avg:.0f} spike={'YES' if volume_ok else 'NO'}"
+    )
 
     # ---- LONG signal ----
-    if flip_long and close > vwap and volume_ok and rsi < RSI_OVERBOUGHT:
-        sl     = get_supertrend_sl(df, "BUY")
-        risk   = close - sl
-        if risk <= 0:
-            return _HOLD
-        target = close + (RISK_REWARD_RATIO * risk)
-        logger.debug(f"LONG signal | close={close:.2f} vwap={vwap:.2f} rsi={rsi:.1f} sl={sl:.2f} tgt={target:.2f}")
-        return {"action": "BUY", "sl": sl, "target": target}
+    if flip_long:
+        if close <= vwap:
+            logger.info(f"{symbol}: LONG flip detected but REJECTED — close {close:.2f} is below VWAP {vwap:.2f}")
+        elif not volume_ok:
+            logger.info(f"{symbol}: LONG flip detected but REJECTED — volume {volume:.0f} < {VOLUME_SPIKE_MULTIPLIER}× avg {vol_avg:.0f}")
+        elif rsi >= RSI_OVERBOUGHT:
+            logger.info(f"{symbol}: LONG flip detected but REJECTED — RSI {rsi:.1f} >= overbought {RSI_OVERBOUGHT}")
+        else:
+            sl   = get_supertrend_sl(df, "BUY", row=-2)
+            risk = close - sl
+            if risk <= 0:
+                logger.info(f"{symbol}: LONG flip REJECTED — risk={risk:.2f} (SL above entry?)")
+                return _HOLD
+            target = close + (RISK_REWARD_RATIO * risk)
+            logger.info(f"{symbol}: *** BUY SIGNAL *** entry={close:.2f} sl={sl:.2f} target={target:.2f} risk=₹{risk:.2f}")
+            return {"action": "BUY", "sl": sl, "target": target}
 
     # ---- SHORT signal ----
-    if flip_short and close < vwap and volume_ok and rsi > RSI_OVERSOLD:
-        sl     = get_supertrend_sl(df, "SELL")
-        risk   = sl - close
-        if risk <= 0:
-            return _HOLD
-        target = close - (RISK_REWARD_RATIO * risk)
-        logger.debug(f"SHORT signal | close={close:.2f} vwap={vwap:.2f} rsi={rsi:.1f} sl={sl:.2f} tgt={target:.2f}")
-        return {"action": "SELL", "sl": sl, "target": target}
+    if flip_short:
+        if close >= vwap:
+            logger.info(f"{symbol}: SHORT flip detected but REJECTED — close {close:.2f} is above VWAP {vwap:.2f}")
+        elif not volume_ok:
+            logger.info(f"{symbol}: SHORT flip detected but REJECTED — volume {volume:.0f} < {VOLUME_SPIKE_MULTIPLIER}× avg {vol_avg:.0f}")
+        elif rsi <= RSI_OVERSOLD:
+            logger.info(f"{symbol}: SHORT flip detected but REJECTED — RSI {rsi:.1f} <= oversold {RSI_OVERSOLD}")
+        else:
+            sl   = get_supertrend_sl(df, "SELL", row=-2)
+            risk = sl - close
+            if risk <= 0:
+                logger.info(f"{symbol}: SHORT flip REJECTED — risk={risk:.2f} (SL below entry?)")
+                return _HOLD
+            target = close - (RISK_REWARD_RATIO * risk)
+            logger.info(f"{symbol}: *** SELL SIGNAL *** entry={close:.2f} sl={sl:.2f} target={target:.2f} risk=₹{risk:.2f}")
+            return {"action": "SELL", "sl": sl, "target": target}
 
     return _HOLD
 
@@ -113,15 +152,15 @@ def check_exit_signal(df: pd.DataFrame, position: dict) -> str | None:
       2. Price hitting stop-loss
       3. Supertrend flipping against the trade direction
 
-    Returns "TARGET", "STOP_LOSS", "TREND_FLIP", or None (hold).
+    Uses iloc[-2] (last completed candle) for consistency.
     """
-    current_price = df["Close"].iloc[-1]
+    current_price = df["Close"].iloc[-2]
     direction     = position["direction"]
     sl            = position["sl"]
     target        = position["target"]
 
     try:
-        curr_dir = int(df[STD_COL].iloc[-1])
+        curr_dir = int(df[STD_COL].iloc[-2])
     except (KeyError, ValueError):
         curr_dir = None
 
