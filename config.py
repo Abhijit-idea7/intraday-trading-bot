@@ -22,7 +22,7 @@ RSI_PERIOD              = 14
 RSI_OVERBOUGHT          = 72      # No new longs above this
 RSI_OVERSOLD            = 28      # No new shorts below this
 
-VOLUME_SPIKE_MULTIPLIER = 1.5     # Current volume must be > 1.5x avg
+VOLUME_SPIKE_MULTIPLIER = 1.2     # Current volume must be > 1.2x avg (1.5 was too tight on 2m candles)
 VOLUME_LOOKBACK         = 10      # Candles used to compute avg volume
 
 # ---------------------------------------------------------------------------
