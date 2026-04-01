@@ -34,6 +34,7 @@ from config import (
 from data_feed import fetch_candles
 from indicators import (
     RSI_COL,
+    ST_COL,
     STD_COL,
     VOLAVG_COL,
     VWAP_COL,
