@@ -124,7 +124,7 @@ def scan_for_entries(candidates: list[str], tracker: TradeTracker) -> None:
             if df is None:
                 continue
 
-            signal = generate_signal(df)
+            signal = generate_signal(df, symbol=symbol)
 
             if signal["action"] in ("BUY", "SELL"):
                 entry_price = float(df["Close"].iloc[-1])
