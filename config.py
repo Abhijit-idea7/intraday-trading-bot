@@ -15,8 +15,8 @@ STOCK_UNIVERSE = [
 # ---------------------------------------------------------------------------
 # Strategy Parameters
 # ---------------------------------------------------------------------------
-SUPERTREND_PERIOD       = 7
-SUPERTREND_MULTIPLIER   = 3.0
+SUPERTREND_PERIOD       = 10
+SUPERTREND_MULTIPLIER   = 2.0
 
 RSI_PERIOD              = 14
 RSI_OVERBOUGHT          = 72      # No new longs above this
@@ -42,8 +42,8 @@ RISK_REWARD_RATIO = 2.0           # Target = 2× the risk distance
 # ---------------------------------------------------------------------------
 TRADE_START_TIME   = "09:20"      # No entries before this
 SQUARE_OFF_TIME    = "15:15"      # Force-close all positions at this time
-CANDLE_INTERVAL    = "3m"         # yfinance interval string
-LOOP_SLEEP_SECONDS = 180          # Sleep between strategy iterations
+CANDLE_INTERVAL    = "2m"         # yfinance interval string
+LOOP_SLEEP_SECONDS = 120          # Sleep between strategy iterations (matches 2m candle)
 
 # ---------------------------------------------------------------------------
 # Stocksdeveloper Webhook
