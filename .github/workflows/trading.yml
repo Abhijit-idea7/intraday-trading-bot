@@ -1,12 +1,20 @@
 name: Intraday Trading Bot
 
 # -----------------------------------------------------------------------
-# Trigger: every weekday at 03:50 UTC = 09:20 AM IST (market open + 5 min)
-# Manual trigger also available from the Actions tab for testing.
+# Cron fires at 03:15 UTC = 08:45 IST (35 min before trade start).
+# GitHub Actions can delay scheduled runs by up to 30–60 min during
+# peak hours. By scheduling early, the runner is guaranteed to be active
+# well before 09:20 IST when the Python script begins trading.
+#
+# The Python script (main.py) handles the wait internally:
+#   → sits in a 30-second poll loop until 09:20 IST
+#   → then selects candidates and starts the strategy loop
+#
+# Timeout: 390 minutes covers 08:45 → 15:15 IST with buffer.
 # -----------------------------------------------------------------------
 on:
   schedule:
-    - cron: "50 3 * * 1-5"   # Mon–Fri, 09:20 IST
+    - cron: "15 3 * * 1-5"   # Mon–Fri, 08:45 IST (early to beat runner delays)
   workflow_dispatch:           # Manual run button in GitHub Actions UI
 
 jobs:
@@ -16,9 +24,7 @@ jobs:
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
-    # 360 minutes = 6 hours = exactly 09:20 → 15:20 IST
-    # The script exits cleanly at 15:15 IST well within this window.
-    timeout-minutes: 360
+    timeout-minutes: 390
 
     steps:
       # ---- 1. Checkout code ----
