@@ -104,24 +104,37 @@ def _supertrend(
     direction   = np.ones(n, dtype=int)
 
     for i in range(1, n):
+        # ---- ATR warmup: skip persistence logic until bands are seeded ----
+        # During the first `period` rows, basic_upper/lower are NaN (EWM warmup).
+        # NaN comparisons always return False in Python, so the else-branch keeps
+        # propagating NaN indefinitely — we must break the chain explicitly.
+        if np.isnan(basic_upper[i]) or np.isnan(basic_lower[i]):
+            # Still in warmup — carry forward (NaN → NaN is fine here)
+            final_upper[i] = final_upper[i - 1]
+            final_lower[i] = final_lower[i - 1]
+            direction[i]   = direction[i - 1]
+            continue
+
         # ---- Band persistence ----
+        # If previous band was NaN (first valid row after warmup), seed with basic value.
         # Upper band: only drops, never rises — unless previous close broke above it
-        final_upper[i] = (
-            basic_upper[i]
-            if basic_upper[i] < final_upper[i - 1] or close_arr[i - 1] > final_upper[i - 1]
-            else final_upper[i - 1]
-        )
+        if np.isnan(final_upper[i - 1]):
+            final_upper[i] = basic_upper[i]
+        elif basic_upper[i] < final_upper[i - 1] or close_arr[i - 1] > final_upper[i - 1]:
+            final_upper[i] = basic_upper[i]
+        else:
+            final_upper[i] = final_upper[i - 1]
+
         # Lower band: only rises, never drops — unless previous close broke below it
-        final_lower[i] = (
-            basic_lower[i]
-            if basic_lower[i] > final_lower[i - 1] or close_arr[i - 1] < final_lower[i - 1]
-            else final_lower[i - 1]
-        )
+        if np.isnan(final_lower[i - 1]):
+            final_lower[i] = basic_lower[i]
+        elif basic_lower[i] > final_lower[i - 1] or close_arr[i - 1] < final_lower[i - 1]:
+            final_lower[i] = basic_lower[i]
+        else:
+            final_lower[i] = final_lower[i - 1]
 
         # ---- Direction flip ----
-        # FIX: compare against CURRENT bar's finalized bands [i], not previous [i-1].
-        # TradingView: direction = close > upperBand ? bullish : close < lowerBand ? bearish : prev
-        # Using [i-1] made the flip harder to trigger — this was causing missed signals.
+        # Compare close against CURRENT bar's finalized bands [i] — matches TradingView.
         if close_arr[i] > final_upper[i]:
             direction[i] = 1
         elif close_arr[i] < final_lower[i]:
