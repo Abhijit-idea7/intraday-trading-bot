@@ -4,10 +4,12 @@ strategy.py
 Signal generation: Supertrend + VWAP + Volume Spike + RSI Guard.
 
 Entry logic (applied to the last COMPLETED candle = iloc[-2]):
-  LONG  — Supertrend flips to bullish AND close > VWAP
-           AND volume > 1.2× avg AND RSI < RSI_OVERBOUGHT
-  SHORT — Supertrend flips to bearish AND close < VWAP
-           AND volume > 1.2× avg AND RSI > RSI_OVERSOLD
+  LONG  — Supertrend flips to bullish AND close > VWAP AND RSI < RSI_OVERBOUGHT
+  SHORT — Supertrend flips to bearish AND close < VWAP AND RSI > RSI_OVERSOLD
+
+  Volume spike is logged for reference but NOT used as an entry filter.
+  Reason: on 2-min charts the rolling avg includes high-volume morning candles,
+  causing every afternoon candle to appear as "low volume" and blocking valid trades.
 
 NOTE: We always use iloc[-2] as the signal candle (last fully closed bar).
       iloc[-1] is the currently-forming candle on yfinance and has
@@ -97,49 +99,45 @@ def generate_signal(df: pd.DataFrame, symbol: str = "") -> dict:
 
     flip_long  = (prev_dir == -1) and (curr_dir == 1)
     flip_short = (prev_dir ==  1) and (curr_dir == -1)
-    volume_ok  = volume >= VOLUME_SPIKE_MULTIPLIER * vol_avg
+    vol_ratio  = (volume / vol_avg) if vol_avg > 0 else 0
 
     # Log current state for every stock every tick — essential for diagnosing missed signals
     logger.info(
         f"{symbol}: dir={curr_dir:+d} flip_long={flip_long} flip_short={flip_short} | "
         f"close={close:.2f} vwap={vwap:.2f} {'↑above' if close > vwap else '↓below'} | "
-        f"rsi={rsi:.1f} | vol={volume:.0f} avg={vol_avg:.0f} spike={'YES' if volume_ok else 'NO'}"
+        f"rsi={rsi:.1f} | vol_ratio={vol_ratio:.2f}x"
     )
 
     # ---- LONG signal ----
     if flip_long:
         if close <= vwap:
-            logger.info(f"{symbol}: LONG flip detected but REJECTED — close {close:.2f} is below VWAP {vwap:.2f}")
-        elif not volume_ok:
-            logger.info(f"{symbol}: LONG flip detected but REJECTED — volume {volume:.0f} < {VOLUME_SPIKE_MULTIPLIER}× avg {vol_avg:.0f}")
+            logger.info(f"{symbol}: LONG flip REJECTED — close {close:.2f} below VWAP {vwap:.2f}")
         elif rsi >= RSI_OVERBOUGHT:
-            logger.info(f"{symbol}: LONG flip detected but REJECTED — RSI {rsi:.1f} >= overbought {RSI_OVERBOUGHT}")
+            logger.info(f"{symbol}: LONG flip REJECTED — RSI {rsi:.1f} overbought (>= {RSI_OVERBOUGHT})")
         else:
             sl   = get_supertrend_sl(df, "BUY", row=-2)
             risk = close - sl
             if risk <= 0:
-                logger.info(f"{symbol}: LONG flip REJECTED — risk={risk:.2f} (SL above entry?)")
+                logger.info(f"{symbol}: LONG flip REJECTED — invalid risk {risk:.2f}")
                 return _HOLD
             target = close + (RISK_REWARD_RATIO * risk)
-            logger.info(f"{symbol}: *** BUY SIGNAL *** entry={close:.2f} sl={sl:.2f} target={target:.2f} risk=₹{risk:.2f}")
+            logger.info(f"{symbol}: *** BUY SIGNAL *** entry={close:.2f} sl={sl:.2f} target={target:.2f} risk=₹{risk:.2f} vol={vol_ratio:.2f}x")
             return {"action": "BUY", "sl": sl, "target": target}
 
     # ---- SHORT signal ----
     if flip_short:
         if close >= vwap:
-            logger.info(f"{symbol}: SHORT flip detected but REJECTED — close {close:.2f} is above VWAP {vwap:.2f}")
-        elif not volume_ok:
-            logger.info(f"{symbol}: SHORT flip detected but REJECTED — volume {volume:.0f} < {VOLUME_SPIKE_MULTIPLIER}× avg {vol_avg:.0f}")
+            logger.info(f"{symbol}: SHORT flip REJECTED — close {close:.2f} above VWAP {vwap:.2f}")
         elif rsi <= RSI_OVERSOLD:
-            logger.info(f"{symbol}: SHORT flip detected but REJECTED — RSI {rsi:.1f} <= oversold {RSI_OVERSOLD}")
+            logger.info(f"{symbol}: SHORT flip REJECTED — RSI {rsi:.1f} oversold (<= {RSI_OVERSOLD})")
         else:
             sl   = get_supertrend_sl(df, "SELL", row=-2)
             risk = sl - close
             if risk <= 0:
-                logger.info(f"{symbol}: SHORT flip REJECTED — risk={risk:.2f} (SL below entry?)")
+                logger.info(f"{symbol}: SHORT flip REJECTED — invalid risk {risk:.2f}")
                 return _HOLD
             target = close - (RISK_REWARD_RATIO * risk)
-            logger.info(f"{symbol}: *** SELL SIGNAL *** entry={close:.2f} sl={sl:.2f} target={target:.2f} risk=₹{risk:.2f}")
+            logger.info(f"{symbol}: *** SELL SIGNAL *** entry={close:.2f} sl={sl:.2f} target={target:.2f} risk=₹{risk:.2f} vol={vol_ratio:.2f}x")
             return {"action": "SELL", "sl": sl, "target": target}
 
     return _HOLD
