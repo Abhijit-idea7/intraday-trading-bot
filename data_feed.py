@@ -15,19 +15,9 @@ from config import CANDLE_INTERVAL, STOCK_UNIVERSE, TOP_N_STOCKS
 
 logger = logging.getLogger(__name__)
 
-# Yahoo Finance lags NSE symbol changes by months.
-# Map the correct Zerodha/NSE symbol → the ticker Yahoo Finance still recognises.
-# Orders are always placed using the NSE symbol; only data fetching uses this map.
-YFINANCE_TICKER_OVERRIDES: dict[str, str] = {
-    "ETERNAL": "ZOMATO",      # Renamed from Zomato Ltd in 2024; Yahoo still uses ZOMATO.NS
-    "TMPV":    "TATAMOTORS",  # Demerged Oct 2025; Yahoo may still use TATAMOTORS.NS
-}
-
-
 def _ns(symbol: str) -> str:
-    """Return Yahoo Finance ticker string, accounting for any NSE symbol renames."""
-    yf_symbol = YFINANCE_TICKER_OVERRIDES.get(symbol, symbol)
-    return f"{yf_symbol}.NS"
+    """Return Yahoo Finance ticker string for NSE."""
+    return f"{symbol}.NS"
 
 
 def fetch_candles(symbol: str, interval: str = CANDLE_INTERVAL, period: str = "1d") -> pd.DataFrame | None:
