@@ -34,6 +34,11 @@ def fetch_candles(symbol: str, interval: str = CANDLE_INTERVAL, period: str = "1
                 continue
             df = df[["Open", "High", "Low", "Close", "Volume"]].dropna()
             df.index = pd.to_datetime(df.index)
+            # Keep only today's session — yfinance sometimes bleeds in previous day's candles
+            # which would anchor VWAP to the wrong start point
+            if not df.empty:
+                last_date = df.index[-1].normalize()
+                df = df[df.index >= last_date]
             return df
         except Exception as e:
             logger.warning(f"{symbol}: fetch error on attempt {attempt + 1} — {e}")
