@@ -52,15 +52,27 @@ MIN_CANDLES = 15
 
 def fetch_and_prepare(symbol: str) -> pd.DataFrame | None:
     """
-    Download today's candles and attach all indicators.
-    Returns None if data is insufficient.
+    Fetch 5 days of candles for proper ATR/RSI warmup, compute all indicators,
+    then return only TODAY's candles for signal generation.
+
+    Why 5d? TradingView's Supertrend ATR is warmed up over months of data.
+    With only 1d (today's ~60-90 candles), the ATR diverges from TradingView's
+    especially in the first 1-2 hours. 5d gives ~300+ candles — much closer.
+    VWAP is calculated per day so it still anchors correctly to today's open.
     """
-    df = fetch_candles(symbol)
-    if df is None or len(df) < MIN_CANDLES:
-        logger.info(f"{symbol}: only {len(df) if df is not None else 0} candles — need {MIN_CANDLES}, skipping.")
+    df_full = fetch_candles(symbol, period="5d")
+    if df_full is None or len(df_full) < MIN_CANDLES:
+        logger.info(f"{symbol}: only {len(df_full) if df_full is not None else 0} candles — need {MIN_CANDLES}, skipping.")
         return None
     try:
-        return add_indicators(df)
+        df_ind = add_indicators(df_full)
+        # Filter to today only for signal generation
+        today  = df_ind.index[-1].date()
+        df_today = df_ind[df_ind.index.date == today]
+        if len(df_today) < 3:
+            logger.info(f"{symbol}: only {len(df_today)} candles today — waiting for more data.")
+            return None
+        return df_today
     except Exception as e:
         logger.warning(f"{symbol}: indicator calculation failed — {e}")
         return None
@@ -101,10 +113,11 @@ def generate_signal(df: pd.DataFrame, symbol: str = "") -> dict:
     flip_short = (prev_dir ==  1) and (curr_dir == -1)
     vol_ratio  = (volume / vol_avg) if vol_avg > 0 else 0
 
-    # Log current state for every stock every tick — essential for diagnosing missed signals
+    st_band = df[ST_COL].iloc[-2]   # Supertrend line value — compare this with TradingView
+    # Log current state — compare st_band with TradingView's Supertrend value to verify match
     logger.info(
         f"{symbol}: dir={curr_dir:+d} flip_long={flip_long} flip_short={flip_short} | "
-        f"close={close:.2f} vwap={vwap:.2f} {'↑above' if close > vwap else '↓below'} | "
+        f"close={close:.2f} ST={st_band:.2f} vwap={vwap:.2f} {'↑above' if close > vwap else '↓below'} | "
         f"rsi={rsi:.1f} | vol_ratio={vol_ratio:.2f}x"
     )
 
