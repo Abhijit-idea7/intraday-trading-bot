@@ -48,8 +48,10 @@ class TradeTracker:
         return len(self._positions)
 
     def can_open_new_trade(self) -> bool:
-        """True if we have not yet hit the daily trade cap."""
-        return self.daily_trades < MAX_POSITIONS
+        """True if fewer than MAX_POSITIONS stocks are currently open.
+        Uses open_count() not daily_trades — so closed positions free up
+        slots and the same stock can be re-entered on the next flip signal."""
+        return self.open_count() < MAX_POSITIONS
 
     def all_positions(self) -> list[Position]:
         return list(self._positions.values())
@@ -79,7 +81,7 @@ class TradeTracker:
         logger.info(
             f"[TRACKER] Added {direction} {symbol} | "
             f"entry={entry_price:.2f} sl={sl:.2f} tgt={target:.2f} qty={quantity} | "
-            f"trades today={self.daily_trades}/{MAX_POSITIONS}"
+            f"open={self.open_count()}/{MAX_POSITIONS} slots | total today={self.daily_trades}"
         )
 
     def remove_position(self, symbol: str) -> None:
@@ -97,5 +99,5 @@ class TradeTracker:
                 f"  {pnl_dir} {p.symbol} | dir={p.direction} qty={p.quantity} "
                 f"entry={p.entry_price:.2f} sl={p.sl:.2f} tgt={p.target:.2f}"
             )
-        lines.append(f"Trades today: {self.daily_trades}/{MAX_POSITIONS}")
+        lines.append(f"Open slots: {self.open_count()}/{MAX_POSITIONS} | Total trades today: {self.daily_trades}")
         return "\n".join(lines)
