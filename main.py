@@ -113,7 +113,7 @@ def scan_for_entries(candidates: list[str], tracker: TradeTracker) -> None:
     """Check each candidate for a fresh entry signal."""
     for symbol in candidates:
         if not tracker.can_open_new_trade():
-            logger.info(f"Daily trade cap ({MAX_POSITIONS}) reached — no new entries.")
+            logger.info(f"All {MAX_POSITIONS} slots occupied — waiting for a position to close before new entries.")
             break
 
         if tracker.has_position(symbol):
