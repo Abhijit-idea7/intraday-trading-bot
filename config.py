@@ -28,9 +28,9 @@ VOLUME_LOOKBACK         = 10      # Candles used to compute avg volume
 # ---------------------------------------------------------------------------
 # Position Sizing
 # ---------------------------------------------------------------------------
-POSITION_SIZE_INR = 50_000        # Capital per trade in INR
-MAX_POSITIONS     = 5             # Max simultaneous open positions
-TOP_N_STOCKS      = 5             # Candidates selected daily by ATR%
+POSITION_SIZE_INR = 100_000       # Capital per trade in INR
+MAX_POSITIONS     = 10            # Max simultaneous open positions (matches TOP_N_STOCKS)
+TOP_N_STOCKS      = 10            # Candidates selected daily by ATR%
 
 # ---------------------------------------------------------------------------
 # Risk / Reward
