@@ -12,9 +12,14 @@ via GitHub Actions), so no cross-day persistence is needed.
 """
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from datetime import datetime
+
+import pytz
 
 from config import MAX_POSITIONS
+
+IST = pytz.timezone("Asia/Kolkata")
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +32,7 @@ class Position:
     sl:          float  # stop-loss price
     target:      float  # target price
     quantity:    int
+    entry_time:  str    # "HH:MM" in IST — recorded for P&L reporting
 
 
 class TradeTracker:
@@ -69,6 +75,7 @@ class TradeTracker:
         target:      float,
         quantity:    int,
     ) -> None:
+        entry_time = datetime.now(IST).strftime("%H:%M")
         self._positions[symbol] = Position(
             symbol=symbol,
             direction=direction,
@@ -76,6 +83,7 @@ class TradeTracker:
             sl=sl,
             target=target,
             quantity=quantity,
+            entry_time=entry_time,
         )
         self.daily_trades += 1
         logger.info(
